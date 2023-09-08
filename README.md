@@ -1,2 +1,2 @@
 # KaggleBikeShare
-IC1
+KaggleBikeShare Competition code
