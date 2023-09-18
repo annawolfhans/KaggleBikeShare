@@ -120,6 +120,7 @@ bike_recipe <- recipe(count~., data=bikeTrain) %>%
   step_mutate(weather=ifelse(weather==4, 3, weather)) %>% #Relabel weather 4 to 3
   step_mutate(weather=factor(weather, levels=1:3, labels=c("Sunny", "Mist", "Rain"))) %>%
   step_time(datetime, features="hour") %>%
+  # step_mutate(count=log(count)) %>%
   step_rm(datetime)
 prepped_recipe <- prep(bike_recipe)
 bake(prepped_recipe, new_data = bikeTrain) #Make sure recipe work on train
@@ -133,10 +134,24 @@ bike_pois_workflow <- workflow() %>%
   add_model(pois_mod) %>%
   fit(data = bikeTrain) 
 
-bike_predictions <- predict(bike_pois_workflow,
-                            new_data = bikeTest)
+bike_predictions <- (predict(bike_pois_workflow,
+                            new_data = bikeTest))
 
 extract_fit_engine(bike_pois_workflow) %>%
   summary()
 extract_fit_engine(bike_pois_workflow) %>%
   tidy()
+
+## Get Predictions for test set AND format for Kaggle
+test_preds_pois <- predict(bike_pois_workflow, new_data = bikeTest) %>%
+  bind_cols(., bikeTest) %>% #Bind predictions with test data
+  select(datetime, .pred) %>% #Just keep datetime and predictions
+  rename(count=.pred) %>% #rename pred to count (for submission to Kaggle)
+  mutate(count=pmax(0, count)) %>% #pointwise max of (0, prediction)
+  # run downs rows and if 0 is bigger, it will replace it with 0, otherwise use count
+  mutate(datetime=as.character(format(datetime))) #needed for right format to Kaggle
+
+# vroom will add rando variables unelss you make it character string
+vroom_write(x=test_preds_pois, file="./TestPredsPois.csv", delim=",")
+
+# make sure to fix poiss and with linear modeling has log(exp()) stuff
