@@ -155,3 +155,62 @@ test_preds_pois <- predict(bike_pois_workflow, new_data = bikeTest) %>%
 vroom_write(x=test_preds_pois, file="./TestPredsPois.csv", delim=",")
 
 # make sure to fix poiss and with linear modeling has log(exp()) stuff
+
+
+### PENALIZED REGRESSION ###
+
+## Libraries I am going to need
+library(tidyverse)
+library(tidymodels)
+library(vroom)
+## Read in the data
+bikeTrain <- vroom("./train.csv")
+bikeTest <- vroom("./test.csv")
+## Remove casual and registered because we can't use them to predict
+bikeTrain <- bikeTrain %>%
+  select(-casual, - registered)%>%
+  mutate(count=log(count)) 
+## Cleaning & Feature Engineering
+bike_preg_recipe <- recipe(count~., data=bikeTrain) %>%
+  step_mutate(weather=ifelse(weather==4, 3, weather)) %>% #Relabel weather 4 to 3
+  step_mutate(weather=factor(weather, levels=1:3, labels=c("Sunny", "Mist", "Rain"))) %>%
+  step_time(datetime, features="hour") %>%
+  step_rm(datetime) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+prepped_preg_recipe <- prep(bike_preg_recipe)
+bake(prepped_preg_recipe, new_data = bikeTrain) #Make sure recipe work on train
+bake(prepped_preg_recipe, new_data = bikeTest) #Make sure recipe works on test
+
+## Define the model
+preg_model <- linear_reg(penalty = 0, mixture = 0) %>%
+  set_engine("glmnet") 
+
+## Set up the whole workflow
+preg_workflow <- workflow() %>%
+  add_recipe(bike_preg_recipe) %>%
+  add_model(preg_model) %>%
+  fit(data=bikeTrain)
+
+## Look at the fitted LM model this way
+extract_fit_engine(preg_workflow) %>%
+  summary()
+extract_fit_engine(preg_workflow) %>%
+  tidy()
+# You can see winter is pretty significant etc (should remind u of 330)
+dim(predict(preg_workflow, new_data = bikeTest))
+
+## Get Predictions for test set AND format for Kaggle
+test_preg_preds <- predict(preg_workflow, new_data = bikeTest) %>%
+  mutate(.pred=exp(.pred)) %>%
+  bind_cols(., bikeTest) %>% #Bind predictions with test data
+  select(datetime, .pred) %>% #Just keep datetime and predictions
+  rename(count=.pred) %>% #rename pred to count (for submission to Kaggle)
+  mutate(count=pmax(0, count)) %>% #pointwise max of (0, prediction)
+  # run downs rows and if 0 is bigger, it will replace it with 0, otherwise use count
+  mutate(datetime=as.character(format(datetime))) #needed for right format to Kaggle
+
+# vroom will add rando variables unless you make it character string
+vroom_write(x=test_preg_preds, file="./TestPredsPenalized.csv", delim=",")
+
