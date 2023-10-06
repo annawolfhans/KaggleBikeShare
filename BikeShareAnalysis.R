@@ -1,6 +1,6 @@
-#########################
-### LINEAR REGRESSION ###
-#########################
+
+###### LINEAR REGRESSION ######
+
 
 # put data category 4 in category 3
 # change weather to factors, create time of day variable
@@ -385,9 +385,7 @@ test_tree_preds <- predict(final_wf, new_data = bikeTest) %>%
 # vroom will add rando variables unless you make it character string
 vroom_write(x=test_tree_preds, file="./TestPredsTree.csv", delim=",")
 
-#######################################
-######### REGRESSION FORESTS ##########
-#######################################
+######### RANDOM FORESTS ##########
 
 ## Libraries I am going to need
 library(tidyverse)
@@ -401,11 +399,14 @@ bikeTest <- vroom("./test.csv")
 bikeTrain <- bikeTrain %>%
   select(-casual, - registered)%>%
   mutate(count=log(count)) 
+
+# bikeTrain$year <- lubridate::year(bikeTrain$datetime)
 ## Cleaning & Feature Engineering
 bike_preg_recipe <- recipe(count~., data=bikeTrain) %>%
   step_mutate(weather=ifelse(weather==4, 3, weather)) %>% #Relabel weather 4 to 3
   step_mutate(weather=factor(weather, levels=1:3, labels=c("Sunny", "Mist", "Rain"))) %>%
   step_time(datetime, features="hour") %>%
+  step_date(datetime, features="year") %>%
   step_rm(datetime) %>%
   step_dummy(all_nominal_predictors()) %>%
   step_normalize(all_numeric_predictors())
@@ -419,6 +420,12 @@ forest_model <- rand_forest(mtry = tune(),
                             min_n=tune(),
                             trees=500) %>%
   set_engine("ranger") %>%
+  set_mode("regression")
+## Define the model using boost_trees
+forest_model <- boost_tree(mtry=tune(),
+                            min_n=tune(),
+                            trees=500) %>%
+  set_engine("xgboost") %>%
   set_mode("regression")
 
 ## Set up the whole workflow
@@ -465,9 +472,7 @@ test_forests_preds <- predict(final_wf, new_data = bikeTest) %>%
 vroom_write(x=test_forests_preds, file="./TestPredsForest.csv", delim=",")
 
 
-###########################
 ##### STACKING MODELS #####
-###########################
 
 ## Libraries I am going to need
 library(tidyverse)
@@ -491,28 +496,18 @@ bike_preg_recipe <- recipe(count~., data=bikeTrain) %>%
   step_normalize(all_numeric_predictors())
 
 prepped_preg_recipe <- prep(bike_preg_recipe)
-# bake(prepped_preg_recipe, new_data = bikeTrain) #Make sure recipe work on train
-# bake(prepped_preg_recipe, new_data = bikeTest) #Make sure recipe works on test
 
-## Define the model
 tree_model <- decision_tree(tree_depth = tune(),
                             cost_complexity = tune(),
                             min_n = tune()) %>%
   set_engine("rpart") %>%
   set_mode("regression")
 
-## Set up the whole workflow
+
 tree_wf <- workflow() %>%
   add_recipe(bike_preg_recipe) %>%
   add_model(tree_model) 
 
-## Look at the fitted LM model this way
-# extract_fit_engine(preg_workflow) %>%
-# summary()
-# extract_fit_engine(preg_workflow) %>%
-# tidy()
-# You can see winter is pretty significant etc (should remind u of 330)
-# dim(predict(preg_workflow, new_data = bikeTest))
 tuning_grid <- grid_regular(tree_depth(),
                             cost_complexity(),
                             min_n(),
@@ -525,11 +520,6 @@ tree_results <- tree_wf %>%
             grid=tuning_grid,
             metrics=metric_set(rmse, mae, rsq))
 
-# collect_metrics(tree_results) %>%
-#   filter(.metric=="rmse") %>%
-#   ggplot(data=., aes(x=penalty, y = mean, color = factor(mixture))) +
-#   geom_line()
-
 bestTune <- tree_results %>%
   select_best("rmse")
 
@@ -539,7 +529,7 @@ final_wf <- tree_wf %>%
 
 final_wf %>%
   predict(new_data = bikeTest)
-## Get Predictions for test set AND format for Kaggle
+
 test_tree_preds <- predict(final_wf, new_data = bikeTest) %>%
   mutate(.pred=exp(.pred)) %>%
   bind_cols(., bikeTest) %>% #Bind predictions with test data
@@ -551,10 +541,6 @@ test_tree_preds <- predict(final_wf, new_data = bikeTest) %>%
 
 # vroom will add rando variables unless you make it character string
 vroom_write(x=test_tree_preds, file="./TestPredsTree.csv", delim=",")
-
-#######################################
-######### REGRESSION FORESTS ##########
-#######################################
 
 ## Libraries I am going to need
 library(tidyverse)
@@ -579,8 +565,6 @@ bike_recipe <- recipe(count~., data=bikeTrain) %>%
   step_normalize(all_numeric_predictors())
 
 prepped_recipe <- prep(bike_recipe)
-# bake(prepped_recipe, new_data = bikeTrain) #Make sure recipe work on train
-# bake(prepped_recipe, new_data = bikeTest) #Make sure recipe works on test
 
 ## Cross-validation folds
 folds <- vfold_cv(bikeTrain, v=10)
@@ -589,9 +573,8 @@ folds <- vfold_cv(bikeTrain, v=10)
 untunedModel <- control_stack_grid()
 tunedModel <- control_stack_resamples()
 
-#########
-## LN ###
-#########
+
+### LINEAR MODEL
 
 lin_model <- linear_reg() %>%
   set_engine("lm")
@@ -603,10 +586,7 @@ linreg_wf <- workflow() %>%
 linreg_folds_fit <- linreg_wf %>%
   fit_resamples(resamples=folds,
                 control=tunedModel)
-
-##########
 ## PNR ###
-##########
 
 pen_reg_model <- linear_reg(mixture=tune(),
                             penalty=tune()) %>%
@@ -625,10 +605,8 @@ penreg_folds_fit <- pen_reg_wf %>%
                 grid = pen_reg_tuneGrid,
             metrics = metric_set(rmse),
                 control=untunedModel)
-
-###########
 ## trees ##
-###########
+
 
 reg_tree <- decision_tree(tree_depth = tune(),
                           cost_complexity = tune(),
@@ -650,11 +628,7 @@ tree_folds_fit <- regTree_wf %>%
             grid=regTree_tuneGrid,
             metrics=metric_set(rmse),
             control=untunedModel)
-
-
-#############
 ## FORESTS ##
-#############
 
 forest_model <- rand_forest(mtry = tune(),
                             min_n=tune(),
@@ -677,7 +651,7 @@ forest_folds_fit <- forest_wf %>%
             metrics=metric_set(rmse, mae, rsq),
             control=untunedModel)
 
-#### STACKING #####
+#### STACKING 
 
 bike_stack <- stacks() %>%
   add_candidates(linreg_folds_fit) %>%
@@ -712,3 +686,11 @@ vroom_write(x=stacked_predictions, file="./TestStackedPredictions.csv", delim=",
 
 
 
+
+
+##### OTher ideas #####
+## go back to feature engineering and then do regression forests 
+## Make YEAR a factor
+## Hour as a factor
+## make two models, one to do registered one to do casual
+## USE BOOST_TREES or BART()
